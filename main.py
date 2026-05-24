@@ -4,6 +4,7 @@ import httpx
 from fastapi import FastAPI, Request, Query, HTTPException
 from dotenv import load_dotenv
 from invoice_parser import parse_invoice_from_url
+from pdf_parser import parse_invoice_from_pdf_url
 from sms_parser import parse_sms
 from match_engine import match_payment_to_invoice
 from risk_engine import calculate_risk, format_risk_message
@@ -106,7 +107,7 @@ async def classify_intent(text: str) -> str:
             response.raise_for_status()
             data = response.json()
         intent = data["choices"][0]["message"]["content"].strip().lower()
-        valid = {"sms_payment", "invoice_question", "general_compliance", "other"}
+        valid = {"sms_payment", "invoice_question", "general_compliance", "delete_account", "other"}
         return intent if intent in valid else "other"
     except Exception as e:
         print(f"[IntentClassifier] error: {e}")
@@ -361,11 +362,81 @@ async def receive_message(request: Request):
             await save_message(from_number, "assistant", reply)
             return {"status": "ok", "reply": reply}
 
+        elif msg_type == "document":
+            doc = message["document"]
+            mime = doc.get("mime_type", "")
+            if mime != "application/pdf":
+                reply = "Abhi sirf PDF invoices support hain. Image ya PDF bhejo."
+                await send_whatsapp_message(from_number, reply)
+                return {"status": "ok", "reply": reply}
+
+            doc_id = doc["id"]
+            whatsapp_token = os.getenv("WHATSAPP_TOKEN")
+            async with httpx.AsyncClient(timeout=15) as client:
+                media_resp = await client.get(
+                    f"https://graph.facebook.com/v19.0/{doc_id}",
+                    headers={"Authorization": f"Bearer {whatsapp_token}"}
+                )
+                media_resp.raise_for_status()
+                pdf_url = media_resp.json()["url"]
+
+            parsed = await parse_invoice_from_pdf_url(pdf_url, whatsapp_token)
+
+            if "error" in parsed:
+                reply = "Yeh invoice nahi lag raha, ya PDF mein text readable nahi hai. Details type kar do: vendor name, amount, aur date."
+            else:
+                vendor_name = parsed.get("vendor_name")
+                amount = parsed.get("amount")
+                invoice_date = parsed.get("invoice_date")
+
+                if not all([vendor_name, amount, invoice_date]):
+                    missing = [f for f, v in [("vendor name", vendor_name), ("amount", amount), ("date", invoice_date)] if not v]
+                    reply = f"PDF mein {', '.join(missing)} clearly nahi mila. Please type kar do."
+                else:
+                    user = await get_or_create_user(from_number)
+                    vendor = await get_vendor(from_number, vendor_name)
+                    deadline_days = 15 if (vendor and vendor.get("agreement_type") == "verbal") else 45
+                    await create_invoice(from_number, vendor_name, float(amount), invoice_date, deadline_days)
+
+                    from datetime import date as _date, timedelta
+                    inv_date = _date.fromisoformat(invoice_date)
+                    due_date = inv_date + timedelta(days=deadline_days)
+                    risk = calculate_risk({"due_date": due_date.isoformat(), "amount": amount}, user.get("tax_slab", "unknown"))
+                    risk_msg = format_risk_message(vendor_name, float(amount), invoice_date, risk)
+
+                    if not vendor:
+                        await create_vendor(from_number, vendor_name)
+                        reply = (
+                            f"{risk_msg}\n\n"
+                            f"Ek sawal: {vendor_name} — kya yeh MSME registered supplier hai?\n"
+                            f"Haan / Nahi / Pata nahi — reply karo"
+                        )
+                    else:
+                        reply = risk_msg
+
+            await send_whatsapp_message(from_number, reply)
+            await save_message(from_number, "assistant", reply)
+            return {"status": "ok", "reply": reply}
+
         elif msg_type == "text":
             user_text = message["text"]["body"]
             print(f"Message from {from_number}: {user_text}")
 
             normalized = user_text.strip().lower()
+
+            # ── First-time onboarding ────────────────────────────────────
+            history = await get_conversation_history(from_number, limit=1)
+            if not history:
+                await get_or_create_user(from_number)
+                reply = (
+                    "KarSathi mein aapka swagat hai!\n\n"
+                    "Main aapka personal CA hoon — GST filing, MSME compliance, "
+                    "invoice tracking, vendor payment risk — sab ek jagah.\n\n"
+                    "Pehle bata do — Hindi mein comfortable ho ya English mein?"
+                )
+                await send_whatsapp_message(from_number, reply)
+                await save_message(from_number, "assistant", reply)
+                return {"status": "ok", "reply": reply}
 
             # ── Delete account flow (highest priority) ──────────────────
             if from_number in _pending_deletions:
