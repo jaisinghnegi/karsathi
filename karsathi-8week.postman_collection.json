@@ -1,0 +1,1225 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "name": "KarSathi — 8-Week MVP Test Suite",
+    "description": "End-to-end test collection for KarSathi WhatsApp CFO assistant for Indian MSMEs.\nCovers all 4 build fortnights: onboarding, invoice parsing, GST risk, and hardening.\n\nAll /webhook requests use exact Meta WhatsApp Cloud API payload format.\nAll /filings and /filing-confirmation requests use the agreed CTO ↔ CF-B JSON contract.\n\nRealistic data: Sharma Kirana Store, Jaipur, Rajasthan | GSTIN: 08ABCCS1234F1Z1 | Turnover: under ₹40L",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url",       "value": "http://localhost:8000",    "type": "string" },
+    { "key": "wa_id",          "value": "917814523601",             "type": "string" },
+    { "key": "business_name",  "value": "Sharma Kirana Store",      "type": "string" },
+    { "key": "gstin",          "value": "08ABCCS1234F1Z1",          "type": "string" },
+    { "key": "udyam_no",       "value": "UDYAM-RJ-00-0012345",      "type": "string" },
+    { "key": "phone_id",       "value": "123456789012345",          "type": "string" },
+    { "key": "waba_id",        "value": "987654321098765",          "type": "string" },
+    { "key": "admin_key",      "value": "karsathi_admin_secret",    "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Weeks 1–2 — WhatsApp Bot + Business Profiling",
+      "description": "Set up WhatsApp webhook, onboard Ramesh Sharma (Sharma Kirana Store, Jaipur, Rajasthan), parse Udyam certificate, and return compliance profile with applicable laws.",
+      "item": [
+        {
+          "name": "GET /health — Server health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            },
+            "description": "Verify the FastAPI server is running and all dependencies (PostgreSQL, Redis) are reachable."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time under 500ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(500);",
+                  "});",
+                  "",
+                  "pm.test('Body has status ok', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('status', 'ok');",
+                  "});",
+                  "",
+                  "pm.test('Body has version field', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('version');",
+                  "});",
+                  "",
+                  "pm.test('Body has uptime field', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('uptime_seconds');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /webhook — User sends 'Hi', bot starts onboarding",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Hub-Signature-256", "value": "sha256=test_signature_bypass_for_dev" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{waba_id}}\",\n      \"changes\": [\n        {\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"919000000001\",\n              \"phone_number_id\": \"{{phone_id}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": { \"name\": \"Ramesh Sharma\" },\n                \"wa_id\": \"{{wa_id}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{wa_id}}\",\n                \"id\": \"wamid.HBgMOTE3ODE0NTIzNjAxFQIAERgSMTAyMzQ1Njc4OTAxMjM0NTYA\",\n                \"timestamp\": \"1751328000\",\n                \"type\": \"text\",\n                \"text\": {\n                  \"body\": \"Hi\"\n                }\n              }\n            ]\n          },\n          \"field\": \"messages\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/webhook",
+              "host": ["{{base_url}}"],
+              "path": ["webhook"]
+            },
+            "description": "Simulates a new user sending 'Hi' on WhatsApp. The bot should detect a new user (no profile in DB), send a welcome message in Hindi + English, and begin the 3-question onboarding flow via WhatsApp button templates."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response time under 3000ms', function () {",
+                  "    pm.expect(pm.response.responseTime).to.be.below(3000);",
+                  "});",
+                  "",
+                  "pm.test('Onboarding started flag is true', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('onboarding_started', true);",
+                  "});",
+                  "",
+                  "pm.test('WhatsApp message was sent to user', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('whatsapp_message_sent', true);",
+                  "});",
+                  "",
+                  "pm.test('Next question field is present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('next_question');",
+                  "    pm.expect(json.next_question).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /webhook — User answers 3 onboarding questions (kirana / Rajasthan / under 40L)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Hub-Signature-256", "value": "sha256=test_signature_bypass_for_dev" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{waba_id}}\",\n      \"changes\": [\n        {\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"919000000001\",\n              \"phone_number_id\": \"{{phone_id}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": { \"name\": \"Ramesh Sharma\" },\n                \"wa_id\": \"{{wa_id}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{wa_id}}\",\n                \"id\": \"wamid.HBgMOTE3ODE0NTIzNjAxFQIAERgSMTAyMzQ1Njc4OTAxMjM0NTYCAA\",\n                \"timestamp\": \"1751328060\",\n                \"type\": \"interactive\",\n                \"interactive\": {\n                  \"type\": \"nfm_reply\",\n                  \"nfm_reply\": {\n                    \"response_json\": \"{\\\"segment\\\":\\\"kirana\\\",\\\"state\\\":\\\"Rajasthan\\\",\\\"turnover_band\\\":\\\"under_40L\\\"}\",\n                    \"body\": \"Sent\",\n                    \"name\": \"flow\"\n                  }\n                }\n              }\n            ]\n          },\n          \"field\": \"messages\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/webhook",
+              "host": ["{{base_url}}"],
+              "path": ["webhook"]
+            },
+            "description": "Simulates the user completing the 3-question onboarding flow via WhatsApp Flows (nfm_reply). Answers: segment=kirana, state=Rajasthan, turnover=under_40L. The bot should create a profile in PostgreSQL and run the Knowledge Graph to return a compliance summary."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Profile created in DB', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('profile_created', true);",
+                  "});",
+                  "",
+                  "pm.test('Compliance summary was sent to user', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('compliance_summary_sent', true);",
+                  "});",
+                  "",
+                  "pm.test('Profile contains correct segment', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.profile).to.have.property('segment', 'kirana');",
+                  "});",
+                  "",
+                  "pm.test('Profile contains correct state', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.profile).to.have.property('state', 'Rajasthan');",
+                  "});",
+                  "",
+                  "pm.test('Profile contains correct turnover band', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.profile).to.have.property('turnover_band', 'under_40L');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /webhook — User forwards Udyam certificate image",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Hub-Signature-256", "value": "sha256=test_signature_bypass_for_dev" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{waba_id}}\",\n      \"changes\": [\n        {\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"919000000001\",\n              \"phone_number_id\": \"{{phone_id}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": { \"name\": \"Ramesh Sharma\" },\n                \"wa_id\": \"{{wa_id}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{wa_id}}\",\n                \"id\": \"wamid.HBgMOTE3ODE0NTIzNjAxFQIAERgSMTAyMzQ1Njc4OTAxMjM0NTYDaa\",\n                \"timestamp\": \"1751328120\",\n                \"type\": \"image\",\n                \"image\": {\n                  \"caption\": \"Mera Udyam certificate\",\n                  \"mime_type\": \"image/jpeg\",\n                  \"sha256\": \"a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2\",\n                  \"id\": \"media_id_udyam_cert_001\"\n                }\n              }\n            ]\n          },\n          \"field\": \"messages\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/webhook",
+              "host": ["{{base_url}}"],
+              "path": ["webhook"]
+            },
+            "description": "User forwards their Udyam certificate image. The bot should: (1) download the media via Meta API, (2) pass to Claude vision for extraction, (3) extract GSTIN, Udyam number, business type, state, turnover, (4) update the user profile in PostgreSQL, (5) confirm extraction to user in Hindi."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Document parsed flag is true', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('document_parsed', true);",
+                  "});",
+                  "",
+                  "pm.test('Document type is Udyam', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('document_type', 'udyam_certificate');",
+                  "});",
+                  "",
+                  "pm.test('GSTIN extracted from certificate', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.extracted_fields).to.have.property('gstin');",
+                  "    pm.expect(json.extracted_fields.gstin).to.match(/^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z]{1}[1-9A-Z]{1}Z[0-9A-Z]{1}$/);",
+                  "});",
+                  "",
+                  "pm.test('Udyam number extracted', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.extracted_fields).to.have.property('udyam_no');",
+                  "    pm.expect(json.extracted_fields.udyam_no).to.match(/^UDYAM-/);",
+                  "});",
+                  "",
+                  "pm.test('Profile updated in DB', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('profile_updated', true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /compliance-profile/{wa_id} — Returns applicable laws for user profile",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/compliance-profile/{{wa_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["compliance-profile", "{{wa_id}}"]
+            },
+            "description": "Queries the Knowledge Graph for all applicable laws given the user's profile (kirana, Rajasthan, under 40L). Returns the compliance obligations, risk score, and filing deadlines. This is the output the bot sends to the MSME owner after onboarding."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response has applicable_laws array', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('applicable_laws');",
+                  "    pm.expect(json.applicable_laws).to.be.an('array').with.length.above(0);",
+                  "});",
+                  "",
+                  "pm.test('GST is in applicable laws', function () {",
+                  "    const json = pm.response.json();",
+                  "    const lawKeys = json.applicable_laws.map(l => l.law_key);",
+                  "    pm.expect(lawKeys).to.include('GST');",
+                  "});",
+                  "",
+                  "pm.test('MSMED is in applicable laws', function () {",
+                  "    const json = pm.response.json();",
+                  "    const lawKeys = json.applicable_laws.map(l => l.law_key);",
+                  "    pm.expect(lawKeys).to.include('MSMED');",
+                  "});",
+                  "",
+                  "pm.test('RJ S&E Act is in applicable laws (Rajasthan state law)', function () {",
+                  "    const json = pm.response.json();",
+                  "    const lawKeys = json.applicable_laws.map(l => l.law_key);",
+                  "    pm.expect(lawKeys).to.include('RJ_SE_ACT');",
+                  "});",
+                  "",
+                  "pm.test('FSSAI is in applicable laws (food/kirana)', function () {",
+                  "    const json = pm.response.json();",
+                  "    const lawKeys = json.applicable_laws.map(l => l.law_key);",
+                  "    pm.expect(lawKeys).to.include('FSSAI');",
+                  "});",
+                  "",
+                  "pm.test('risk_score_inr is a non-negative number', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('risk_score_inr');",
+                  "    pm.expect(json.risk_score_inr).to.be.a('number').and.at.least(0);",
+                  "});",
+                  "",
+                  "pm.test('Profile wa_id matches request', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('wa_id', pm.collectionVariables.get('wa_id'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Weeks 3–4 — Invoice Parser + Form I Risk Engine",
+      "description": "Parse invoice photos and bank SMS, build vendor aging, calculate Form I overdue amounts with penalty risk and Section 43B(h) tax deduction loss. Finalize the CTO → CF-B JSON contract.",
+      "item": [
+        {
+          "name": "POST /webhook — User forwards invoice photo",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Hub-Signature-256", "value": "sha256=test_signature_bypass_for_dev" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{waba_id}}\",\n      \"changes\": [\n        {\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"919000000001\",\n              \"phone_number_id\": \"{{phone_id}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": { \"name\": \"Ramesh Sharma\" },\n                \"wa_id\": \"{{wa_id}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{wa_id}}\",\n                \"id\": \"wamid.HBgMOTE3ODE0NTIzNjAxFQIAERgSMTAyMzQ1Njc4OTAxMjM0NTYEbb\",\n                \"timestamp\": \"1751414400\",\n                \"type\": \"image\",\n                \"image\": {\n                  \"caption\": \"Aaj ki invoice — Gupta Wholesale Traders\",\n                  \"mime_type\": \"image/jpeg\",\n                  \"sha256\": \"b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3\",\n                  \"id\": \"media_id_invoice_001\"\n                }\n              }\n            ]\n          },\n          \"field\": \"messages\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/webhook",
+              "host": ["{{base_url}}"],
+              "path": ["webhook"]
+            },
+            "description": "User forwards an invoice photo from Gupta Wholesale Traders (a registered MSME vendor). Claude vision extracts: vendor_name, GSTIN, amount, invoice_date. The Udyam lookup flags this as an MSME vendor. The invoice is stored with is_msme_vendor=true and days_outstanding calculated."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Invoice parsed flag is true', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('invoice_parsed', true);",
+                  "});",
+                  "",
+                  "pm.test('Invoice ID assigned', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('invoice_id');",
+                  "    pm.expect(json.invoice_id).to.be.a('string').and.not.empty;",
+                  "    pm.collectionVariables.set('last_invoice_id', json.invoice_id);",
+                  "});",
+                  "",
+                  "pm.test('Vendor name extracted', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.parsed_invoice).to.have.property('vendor_name');",
+                  "});",
+                  "",
+                  "pm.test('Amount extracted in INR', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.parsed_invoice).to.have.property('amount_inr');",
+                  "    pm.expect(json.parsed_invoice.amount_inr).to.be.a('number').above(0);",
+                  "});",
+                  "",
+                  "pm.test('MSME vendor flag present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.parsed_invoice).to.have.property('is_msme_vendor');",
+                  "});",
+                  "",
+                  "pm.test('Days outstanding calculated', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.parsed_invoice).to.have.property('days_outstanding');",
+                  "    pm.expect(json.parsed_invoice.days_outstanding).to.be.a('number').at.least(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /webhook — User forwards bank SMS text",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Hub-Signature-256", "value": "sha256=test_signature_bypass_for_dev" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{waba_id}}\",\n      \"changes\": [\n        {\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"919000000001\",\n              \"phone_number_id\": \"{{phone_id}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": { \"name\": \"Ramesh Sharma\" },\n                \"wa_id\": \"{{wa_id}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{wa_id}}\",\n                \"id\": \"wamid.HBgMOTE3ODE0NTIzNjAxFQIAERgSMTAyMzQ1Njc4OTAxMjM0NTYFcc\",\n                \"timestamp\": \"1751500800\",\n                \"type\": \"text\",\n                \"text\": {\n                  \"body\": \"HDFC Bank: Rs.18500.00 debited from A/c XX1234 to Mehta Traders Pvt Ltd on 28-Jun-26. Avl Bal Rs.1,24,350.50. Ref No: 402613855921. Call 18002586161 for dispute.\"\n                }\n              }\n            ]\n          },\n          \"field\": \"messages\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/webhook",
+              "host": ["{{base_url}}"],
+              "path": ["webhook"]
+            },
+            "description": "User forwards an HDFC Bank debit SMS. Regex parser extracts: amount=18500, payee=Mehta Traders Pvt Ltd, date=28-Jun-26, reference=402613855921. The bot matches this payment to an outstanding invoice if one exists, marks it as paid, and recalculates Form I exposure."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Payment recorded flag is true', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('payment_recorded', true);",
+                  "});",
+                  "",
+                  "pm.test('SMS parsed as bank transaction', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('source_type', 'bank_sms');",
+                  "});",
+                  "",
+                  "pm.test('Amount extracted correctly (18500)', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.parsed_payment.amount_inr).to.equal(18500);",
+                  "});",
+                  "",
+                  "pm.test('Payee name extracted', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.parsed_payment).to.have.property('payee_name');",
+                  "    pm.expect(json.parsed_payment.payee_name).to.include('Mehta Traders');",
+                  "});",
+                  "",
+                  "pm.test('Payment date extracted', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.parsed_payment).to.have.property('payment_date');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /invoices/{wa_id} — All parsed invoices for user",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/invoices/{{wa_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["invoices", "{{wa_id}}"]
+            },
+            "description": "Returns all invoices stored for Ramesh Sharma's account, including those parsed from photos, PDFs, and bank SMS. Each invoice shows MSME vendor flag, days outstanding, and Form I relevance."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Response is an array', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('invoices');",
+                  "    pm.expect(json.invoices).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('Total count field present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('total_count');",
+                  "});",
+                  "",
+                  "pm.test('Each invoice has required fields', function () {",
+                  "    const json = pm.response.json();",
+                  "    if (json.invoices.length > 0) {",
+                  "        const inv = json.invoices[0];",
+                  "        pm.expect(inv).to.have.property('id');",
+                  "        pm.expect(inv).to.have.property('vendor_name');",
+                  "        pm.expect(inv).to.have.property('gstin');",
+                  "        pm.expect(inv).to.have.property('amount_inr');",
+                  "        pm.expect(inv).to.have.property('invoice_date');",
+                  "        pm.expect(inv).to.have.property('payment_status');",
+                  "        pm.expect(inv).to.have.property('is_msme_vendor');",
+                  "        pm.expect(inv).to.have.property('days_outstanding');",
+                  "        pm.expect(inv).to.have.property('is_form1_relevant');",
+                  "        pm.expect(inv).to.have.property('source_format');",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('No invoice has negative amount', function () {",
+                  "    const json = pm.response.json();",
+                  "    json.invoices.forEach(inv => {",
+                  "        pm.expect(inv.amount_inr).to.be.at.least(0);",
+                  "    });",
+                  "});",
+                  "",
+                  "pm.test('Summary totals present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('summary');",
+                  "    pm.expect(json.summary).to.have.property('total_outstanding_inr');",
+                  "    pm.expect(json.summary).to.have.property('msme_overdue_inr');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /form1-assessment/{wa_id} — Form I overdue amounts, penalty risk, 43B(h) tax loss",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/form1-assessment/{{wa_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["form1-assessment", "{{wa_id}}"]
+            },
+            "description": "Runs the Form I risk engine for the current assessment period. Sums all overdue amounts to MSME-registered vendors past 45 days, calculates MCA penalty using the compound interest formula, and links Section 43B(h) tax deduction loss at the user's estimated tax slab."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Assessment ID present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('assessment_id');",
+                  "    pm.collectionVariables.set('assessment_id', json.assessment_id);",
+                  "});",
+                  "",
+                  "pm.test('Total overdue INR is non-negative', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('total_overdue_inr');",
+                  "    pm.expect(json.total_overdue_inr).to.be.a('number').at.least(0);",
+                  "});",
+                  "",
+                  "pm.test('Penalty risk INR is non-negative', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('penalty_risk_inr');",
+                  "    pm.expect(json.penalty_risk_inr).to.be.a('number').at.least(0);",
+                  "});",
+                  "",
+                  "pm.test('Tax deduction loss INR present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('tax_deduction_loss_inr');",
+                  "    pm.expect(json.tax_deduction_loss_inr).to.be.a('number').at.least(0);",
+                  "});",
+                  "",
+                  "pm.test('Filing deadline is Oct 31', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('deadline');",
+                  "    pm.expect(json.deadline).to.include('10-31').or.to.include('10/31').or.to.include('2026-10-31');",
+                  "});",
+                  "",
+                  "pm.test('MSME vendors array present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('msme_vendors');",
+                  "    pm.expect(json.msme_vendors).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('Assessment period present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('period');",
+                  "    pm.expect(json.period).to.have.property('start');",
+                  "    pm.expect(json.period).to.have.property('end');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /filings — CTO sends filing request to CF-B pipeline (JSON contract)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "cfb_pipeline_api_key_staging" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filing_type\": \"FORM_I\",\n  \"user_id\": \"wa_917814523601\",\n  \"period\": {\n    \"start\": \"2025-10-01\",\n    \"end\": \"2026-03-31\"\n  },\n  \"deadline\": \"2026-10-31\",\n  \"assessment\": {\n    \"total_overdue_inr\": 480000,\n    \"penalty_risk_inr\": 12000,\n    \"tax_deduction_loss_inr\": 14400\n  },\n  \"msme_vendors\": [\n    {\n      \"vendor_name\": \"Gupta Wholesale Traders\",\n      \"gstin\": \"08BBBBS1234C1Z5\",\n      \"udyam_no\": \"UDYAM-RJ-01-0045678\",\n      \"amount_inr\": 280000,\n      \"invoice_date\": \"2026-01-15\",\n      \"days_overdue\": 87\n    },\n    {\n      \"vendor_name\": \"Rajasthan Spice Mill Pvt Ltd\",\n      \"gstin\": \"08CCCCS5678D1Z3\",\n      \"udyam_no\": \"UDYAM-RJ-02-0078901\",\n      \"amount_inr\": 200000,\n      \"invoice_date\": \"2026-02-01\",\n      \"days_overdue\": 70\n    }\n  ],\n  \"user_profile\": {\n    \"segment\": \"kirana\",\n    \"state\": \"Rajasthan\",\n    \"turnover_band\": \"under_40L\",\n    \"gstin\": \"08ABCCS1234F1Z1\",\n    \"udyam_no\": \"UDYAM-RJ-00-0012345\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/filings",
+              "host": ["{{base_url}}"],
+              "path": ["filings"]
+            },
+            "description": "The agreed JSON contract between CTO and CF-B. This payload is sent by the CTO's bot when a user triggers 'File Form I'. CF-B's filing pipeline consumes this to: (1) create a filing request record, (2) assign a CA, (3) pre-fill Form I fields, (4) add to CA dashboard queue. Breaking changes to this schema require sign-off from both owners."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 201 Created', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test('Filing ID assigned by CF-B', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('filing_id');",
+                  "    pm.expect(json.filing_id).to.be.a('string').and.not.empty;",
+                  "    pm.collectionVariables.set('filing_id', json.filing_id);",
+                  "});",
+                  "",
+                  "pm.test('Status is received', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('status', 'received');",
+                  "});",
+                  "",
+                  "pm.test('Filing type is FORM_I', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('filing_type', 'FORM_I');",
+                  "});",
+                  "",
+                  "pm.test('Assigned CA present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('assigned_ca');",
+                  "});",
+                  "",
+                  "pm.test('Deadline echoed back', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('deadline', '2026-10-31');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Weeks 5–6 — GST Risk + Daily Intelligence Message",
+      "description": "GST ITC reversal risk from unfiled vendor GSTR-1, daily 8am intelligence snapshot, upgrade prompt for free-tier users, and filing trigger flow for paid users.",
+      "item": [
+        {
+          "name": "GET /gst-itc-risk/{wa_id} — ITC at-risk from vendor GSTR-1 non-filing",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/gst-itc-risk/{{wa_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["gst-itc-risk", "{{wa_id}}"]
+            },
+            "description": "For each purchase invoice where the vendor has not filed GSTR-1, the claimed ITC is at risk of reversal by the GST department. This endpoint calculates total ITC claimed vs. ITC at-risk, and returns a vendor-level breakdown. Note: for MVP, GSTR-1 status is directional (best-effort) — disclosed honestly to users."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('ITC at-risk amount present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('itc_at_risk_inr');",
+                  "    pm.expect(json.itc_at_risk_inr).to.be.a('number').at.least(0);",
+                  "});",
+                  "",
+                  "pm.test('Total ITC claimed present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('total_itc_claimed_inr');",
+                  "    pm.expect(json.total_itc_claimed_inr).to.be.a('number').at.least(0);",
+                  "});",
+                  "",
+                  "pm.test('ITC at-risk <= total ITC claimed', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.itc_at_risk_inr).to.be.at.most(json.total_itc_claimed_inr);",
+                  "});",
+                  "",
+                  "pm.test('Vendors not filed array present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('vendors_not_filed');",
+                  "    pm.expect(json.vendors_not_filed).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('Assessment date present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('assessment_date');",
+                  "});",
+                  "",
+                  "pm.test('Data confidence disclosed', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('data_confidence');",
+                  "    pm.expect(['directional', 'verified']).to.include(json.data_confidence);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /daily-snapshot/{wa_id} — Revenue, unpaid invoices, GST risk, Form I countdown, cash stuck",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/daily-snapshot/{{wa_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["daily-snapshot", "{{wa_id}}"]
+            },
+            "description": "Builds the daily 8am intelligence message for the user. Aggregates 5 numbers from the DB: revenue from bank SMS, unpaid vendor invoices, GST ITC risk, days until Form I deadline, and cash stuck in overdue receivables. The n8n scheduler calls this at 8am IST and sends the result via WhatsApp template message."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Revenue INR present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('revenue_inr');",
+                  "    pm.expect(json.revenue_inr).to.be.a('number').at.least(0);",
+                  "});",
+                  "",
+                  "pm.test('Unpaid invoices INR present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('unpaid_invoices_inr');",
+                  "    pm.expect(json.unpaid_invoices_inr).to.be.a('number').at.least(0);",
+                  "});",
+                  "",
+                  "pm.test('GST risk INR present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('gst_risk_inr');",
+                  "    pm.expect(json.gst_risk_inr).to.be.a('number').at.least(0);",
+                  "});",
+                  "",
+                  "pm.test('Form I days remaining present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('form1_days_remaining');",
+                  "    pm.expect(json.form1_days_remaining).to.be.a('number');",
+                  "});",
+                  "",
+                  "pm.test('Cash stuck INR present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('cash_stuck_inr');",
+                  "    pm.expect(json.cash_stuck_inr).to.be.a('number').at.least(0);",
+                  "});",
+                  "",
+                  "pm.test('Snapshot date present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('snapshot_date');",
+                  "});",
+                  "",
+                  "pm.test('WhatsApp message template populated', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('whatsapp_message_text');",
+                  "    pm.expect(json.whatsapp_message_text).to.be.a('string').and.not.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /webhook — Paid user sends 'File Form I', bot starts data collection",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Hub-Signature-256", "value": "sha256=test_signature_bypass_for_dev" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{waba_id}}\",\n      \"changes\": [\n        {\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"919000000001\",\n              \"phone_number_id\": \"{{phone_id}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": { \"name\": \"Ramesh Sharma\" },\n                \"wa_id\": \"{{wa_id}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{wa_id}}\",\n                \"id\": \"wamid.HBgMOTE3ODE0NTIzNjAxFQIAERgSMTAyMzQ1Njc4OTAxMjM0NTYHee\",\n                \"timestamp\": \"1751587200\",\n                \"type\": \"text\",\n                \"text\": {\n                  \"body\": \"File Form I\"\n                }\n              }\n            ]\n          },\n          \"field\": \"messages\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/webhook",
+              "host": ["{{base_url}}"],
+              "path": ["webhook"]
+            },
+            "description": "Paid user triggers the filing flow by sending 'File Form I'. The bot checks user.plan == 'paid', starts the structured data collection conversation, pre-fills any fields already extracted from invoices, asks for missing fields only, and prepares the filing request payload for CF-B."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Filing flow started flag is true', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('filing_flow_started', true);",
+                  "});",
+                  "",
+                  "pm.test('Flow type is Form I', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('flow_type', 'FORM_I');",
+                  "});",
+                  "",
+                  "pm.test('Next question sent to user', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('next_question');",
+                  "    pm.expect(json.next_question).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('Pre-filled fields identified', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('prefilled_fields');",
+                  "    pm.expect(json.prefilled_fields).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('Session state saved to Redis', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('session_id');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /upgrade-prompt/{wa_id} — Trigger upgrade button message",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"trigger_reason\": \"form1_risk_shown\",\n  \"risk_amount_inr\": 12000,\n  \"message_variant\": \"penalty_risk\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/upgrade-prompt/{{wa_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["upgrade-prompt", "{{wa_id}}"]
+            },
+            "description": "Sends a WhatsApp button template message to a free-tier user prompting them to upgrade to ₹499/month. The button links to the Razorpay payment page (manual link for MVP). Triggered when the user sees their Form I risk number and the bot surfaces the 'Remove this risk' CTA."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('WhatsApp message sent to user', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('message_sent', true);",
+                  "});",
+                  "",
+                  "pm.test('Button type is payment link', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('button_type', 'payment_link');",
+                  "});",
+                  "",
+                  "pm.test('Payment URL present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('payment_url');",
+                  "    pm.expect(json.payment_url).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('Price is 499 INR', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('price_inr', 499);",
+                  "});",
+                  "",
+                  "pm.test('Meta message ID returned', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('meta_message_id');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Weeks 7–8 — Hardening + Beta",
+      "description": "Edge case handling (blurry invoices, offline resume), admin monitoring view, rule engine audit log, and CF-B's MCA confirmation webhook closing the loop back to the user.",
+      "item": [
+        {
+          "name": "POST /webhook — Blurry invoice photo (fallback: 'please type the amount')",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Hub-Signature-256", "value": "sha256=test_signature_bypass_for_dev" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{waba_id}}\",\n      \"changes\": [\n        {\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"919000000001\",\n              \"phone_number_id\": \"{{phone_id}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": { \"name\": \"Ramesh Sharma\" },\n                \"wa_id\": \"{{wa_id}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{wa_id}}\",\n                \"id\": \"wamid.HBgMOTE3ODE0NTIzNjAxFQIAERgSMTAyMzQ1Njc4OTAxMjM0NTYIff\",\n                \"timestamp\": \"1751673600\",\n                \"type\": \"image\",\n                \"image\": {\n                  \"caption\": \"\",\n                  \"mime_type\": \"image/jpeg\",\n                  \"sha256\": \"0000000000000000000000000000000000000000000000000000000000000000\",\n                  \"id\": \"media_id_blurry_invoice_001\"\n                }\n              }\n            ]\n          },\n          \"field\": \"messages\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/webhook",
+              "host": ["{{base_url}}"],
+              "path": ["webhook"]
+            },
+            "description": "Tests the parser fallback for unreadable invoice images (blurry, dark, rotated, handwritten). The bot should NOT return an error to the user. It should gracefully fall back and ask the user to type the amount manually. This is a critical UX path — a bad error message here causes churn."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200 (graceful fallback, not 500)', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Fallback triggered flag is true', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('fallback_triggered', true);",
+                  "});",
+                  "",
+                  "pm.test('Parse failure reason present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('parse_failure_reason');",
+                  "});",
+                  "",
+                  "pm.test('Fallback message sent to user in plain English', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('fallback_message_sent', true);",
+                  "});",
+                  "",
+                  "pm.test('Fallback message text contains expected phrase', function () {",
+                  "    const json = pm.response.json();",
+                  "    const msg = (json.fallback_message_text || '').toLowerCase();",
+                  "    const hasExpectedPhrase = msg.includes('could not read') || msg.includes('please type') || msg.includes('amount') || msg.includes('parhne mein');",
+                  "    pm.expect(hasExpectedPhrase).to.be.true;",
+                  "});",
+                  "",
+                  "pm.test('No SQL/tech error exposed to user', function () {",
+                  "    const json = pm.response.json();",
+                  "    const msgText = JSON.stringify(json).toLowerCase();",
+                  "    pm.expect(msgText).to.not.include('exception');",
+                  "    pm.expect(msgText).to.not.include('traceback');",
+                  "    pm.expect(msgText).to.not.include('sql');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /webhook — User resumes mid-flow conversation after going offline",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Hub-Signature-256", "value": "sha256=test_signature_bypass_for_dev" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"{{waba_id}}\",\n      \"changes\": [\n        {\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"919000000001\",\n              \"phone_number_id\": \"{{phone_id}}\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": { \"name\": \"Ramesh Sharma\" },\n                \"wa_id\": \"{{wa_id}}\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"{{wa_id}}\",\n                \"id\": \"wamid.HBgMOTE3ODE0NTIzNjAxFQIAERgSMTAyMzQ1Njc4OTAxMjM0NTYJgg\",\n                \"timestamp\": \"1751760000\",\n                \"type\": \"text\",\n                \"text\": {\n                  \"body\": \"48500\"\n                }\n              }\n            ]\n          },\n          \"field\": \"messages\"\n        }\n      ]\n    }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/webhook",
+              "host": ["{{base_url}}"],
+              "path": ["webhook"]
+            },
+            "description": "User went offline mid-flow (e.g., after receiving the blurry invoice fallback prompt asking them to type the amount). They return the next day and type '48500'. The bot must retrieve conversation context from Redis, understand this is an amount response in the invoice entry flow, and continue from where they left off. Tests conversation state management."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Flow resumed flag is true', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('flow_resumed', true);",
+                  "});",
+                  "",
+                  "pm.test('Context restored from Redis', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('context_restored', true);",
+                  "});",
+                  "",
+                  "pm.test('Previous flow step identified', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('resumed_from_step');",
+                  "    pm.expect(json.resumed_from_step).to.be.a('string').and.not.empty;",
+                  "});",
+                  "",
+                  "pm.test('Amount 48500 accepted', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('amount_captured', 48500);",
+                  "});",
+                  "",
+                  "pm.test('Next step in flow present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('next_step');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /admin/users — All users with profiles, risk scores, filing statuses",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Admin-Key", "value": "{{admin_key}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/admin/users",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "users"]
+            },
+            "description": "Internal admin view for the CTO. Returns all registered users with their business profiles, current risk scores, and filing statuses. Used for monitoring beta users and identifying issues. Requires X-Admin-Key header — must return 401 if key is missing or wrong."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Users array present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('users');",
+                  "    pm.expect(json.users).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('Total user count present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('total_users');",
+                  "    pm.expect(json.total_users).to.be.a('number').at.least(0);",
+                  "});",
+                  "",
+                  "pm.test('Each user has required fields', function () {",
+                  "    const json = pm.response.json();",
+                  "    if (json.users.length > 0) {",
+                  "        const user = json.users[0];",
+                  "        pm.expect(user).to.have.property('wa_id');",
+                  "        pm.expect(user).to.have.property('segment');",
+                  "        pm.expect(user).to.have.property('state');",
+                  "        pm.expect(user).to.have.property('risk_score_inr');",
+                  "        pm.expect(user).to.have.property('filing_status');",
+                  "        pm.expect(user).to.have.property('plan');",
+                  "        pm.expect(user).to.have.property('created_at');",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('Ramesh Sharma is in the list', function () {",
+                  "    const json = pm.response.json();",
+                  "    const ramesh = json.users.find(u => u.wa_id === pm.collectionVariables.get('wa_id'));",
+                  "    pm.expect(ramesh).to.not.be.undefined;",
+                  "});"
+                ]
+              }
+            },
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Confirm admin key is set",
+                  "const adminKey = pm.collectionVariables.get('admin_key');",
+                  "if (!adminKey) {",
+                  "    throw new Error('admin_key collection variable is not set');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "GET /audit-log/{wa_id} — Rule engine evaluation log for user",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Admin-Key", "value": "{{admin_key}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/audit-log/{{wa_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["audit-log", "{{wa_id}}"],
+              "query": [
+                { "key": "limit", "value": "50" },
+                { "key": "from_date", "value": "2026-01-01" }
+              ]
+            },
+            "description": "Returns the full rule engine evaluation log for a user. Every time the Knowledge Graph processes a message, the input values, rules evaluated, and output result are logged. This is the audit trail that proves the bot's compliance advice is correct and deterministic — critical for trust and debugging."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('Audit entries array present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('audit_entries');",
+                  "    pm.expect(json.audit_entries).to.be.an('array');",
+                  "});",
+                  "",
+                  "pm.test('Each entry has required fields', function () {",
+                  "    const json = pm.response.json();",
+                  "    if (json.audit_entries.length > 0) {",
+                  "        const entry = json.audit_entries[0];",
+                  "        pm.expect(entry).to.have.property('rule_id');",
+                  "        pm.expect(entry).to.have.property('input_values');",
+                  "        pm.expect(entry).to.have.property('result');",
+                  "        pm.expect(entry).to.have.property('timestamp');",
+                  "        pm.expect(entry).to.have.property('law_key');",
+                  "    }",
+                  "});",
+                  "",
+                  "pm.test('wa_id matches request', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('wa_id', pm.collectionVariables.get('wa_id'));",
+                  "});",
+                  "",
+                  "pm.test('Total evaluated rules count present', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('total_rules_evaluated');",
+                  "    pm.expect(json.total_rules_evaluated).to.be.a('number').at.least(0);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /filing-confirmation — CF-B sends MCA confirmation back to CTO webhook",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Api-Key", "value": "cto_inbound_webhook_key_staging" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filing_id\": \"f8a1c2d3-e4f5-6789-abcd-ef0123456789\",\n  \"user_id\": \"wa_917814523601\",\n  \"status\": \"FILED\",\n  \"mca_confirmation_no\": \"MCA-2026-RJ-084521\",\n  \"filed_at\": \"2026-09-28T14:32:00Z\",\n  \"filed_by_ca\": \"Priya Agarwal, ICAI Reg No. 123456\",\n  \"penalty_avoided_inr\": 12000\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{base_url}}/filing-confirmation",
+              "host": ["{{base_url}}"],
+              "path": ["filing-confirmation"]
+            },
+            "description": "CF-B sends this confirmation after the CA has successfully filed Form I with MCA and received the acknowledgement number. This closes the loop: the CTO backend receives the confirmation, marks the filing as complete in the DB, updates the user's risk score to zero for Form I, and sends the final WhatsApp message to the MSME owner: 'Form I filed. Penalty avoided: ₹12,000.'"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status is 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('WhatsApp confirmation sent to user', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('whatsapp_notified', true);",
+                  "});",
+                  "",
+                  "pm.test('Filing marked as FILED in DB', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('filing_status_updated', true);",
+                  "});",
+                  "",
+                  "pm.test('MCA confirmation number echoed back', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('mca_confirmation_no', 'MCA-2026-RJ-084521');",
+                  "});",
+                  "",
+                  "pm.test('Penalty avoided amount in WhatsApp message', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('penalty_avoided_inr', 12000);",
+                  "});",
+                  "",
+                  "pm.test('User Form I risk score reset to zero', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('form1_risk_score_reset', true);",
+                  "});",
+                  "",
+                  "pm.test('Confirmation receipt acknowledged', function () {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('received', true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
