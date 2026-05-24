@@ -251,7 +251,7 @@ def _format_confirmation_prompt(parsed: dict) -> str:
     return (
         f"Invoice mein yeh details mili hain:\n\n"
         f"🏢 Supplier: {vendor_name}\n"
-        f"💰 Total Amount: ₹{float(amount):,.0f}\n"
+        f"💰 Total Amount: ₹{float(amount):,.2f}\n"
         f"📅 Invoice Date: {display_date}\n\n"
         f"Kya yeh sahi hai?\n"
         f"✅ Haan — yahi save karo\n"
@@ -344,7 +344,7 @@ async def handle_sms_payment(from_number: str, text: str) -> str:
         await mark_invoice_paid(matched_invoice["id"])
         return (
             f"{matched_invoice['vendor_name']} "
-            f"Rs.{int(float(matched_invoice['amount'])):,} — paid!\n"
+            f"Rs.{float(matched_invoice['amount']):,.2f} — paid!\n"
             f"45-day risk cleared."
         )
     elif match_type == "fuzzy":
@@ -352,12 +352,12 @@ async def handle_sms_payment(from_number: str, text: str) -> str:
         _pending_confirmations[from_number] = inv
         return (
             f"Yeh payment {inv['vendor_name']} wale "
-            f"Rs.{int(float(inv['amount'])):,} ({inv['invoice_date']}) invoice ke liye hai?\n"
+            f"Rs.{float(inv['amount']):,.2f} ({inv['invoice_date']}) invoice ke liye hai?\n"
             f"Haan / Nahi"
         )
     else:
         return (
-            f"Rs.{int(float(amount)):,} payment record ho gayi, lekin koi matching invoice nahi mila.\n"
+            f"Rs.{float(amount):,.2f} payment record ho gayi, lekin koi matching invoice nahi mila.\n"
             f"Kya iske liye koi invoice aane wala hai? Forward karo jab mile."
         )
 
@@ -520,7 +520,7 @@ async def receive_message(request: Request):
                     await mark_invoice_paid(pending_inv["id"])
                     reply = (
                         f"{pending_inv['vendor_name']} "
-                        f"Rs.{int(float(pending_inv['amount'])):,} — paid!\n"
+                        f"Rs.{float(pending_inv['amount']):,.2f} — paid!\n"
                         f"45-day risk cleared."
                     )
                 else:

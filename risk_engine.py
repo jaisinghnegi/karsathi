@@ -119,7 +119,7 @@ def format_risk_message(
     # ── Header ──────────────────────────────────────────────────────────
     lines.append(f"✅ *Invoice Save Ho Gayi*")
     lines.append(f"🏢 Supplier: {vendor_name}")
-    lines.append(f"💰 Amount: ₹{amount:,.0f}")
+    lines.append(f"💰 Amount: ₹{amount:,.2f}")
     lines.append(f"📅 Invoice Date: {display_date}")
     lines.append("")
 
@@ -187,13 +187,13 @@ def format_risk_message(
     tax_max = risk["tax_loss_max"]
     if tax_min == tax_max:
         lines.append(
-            f"Matlab: ₹{amount:,.0f} ka kharcha expense nahi maana jaayega, "
-            f"aur aapko *₹{tax_min:,.0f} zyada tax* bharna padega."
+            f"Matlab: ₹{amount:,.2f} ka kharcha expense nahi maana jaayega, "
+            f"aur aapko *₹{tax_min:,.2f} zyada tax* bharna padega."
         )
     else:
         lines.append(
-            f"Matlab: ₹{amount:,.0f} ka kharcha expense nahi maana jaayega, "
-            f"aur aapko *₹{tax_min:,.0f} se ₹{tax_max:,.0f} zyada tax* bharna padega "
+            f"Matlab: ₹{amount:,.2f} ka kharcha expense nahi maana jaayega, "
+            f"aur aapko *₹{tax_min:,.2f} se ₹{tax_max:,.2f} zyada tax* bharna padega "
             "(exact amount aapke tax slab par depend karta hai)."
         )
 
