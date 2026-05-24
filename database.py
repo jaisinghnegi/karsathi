@@ -1,4 +1,5 @@
 import os
+import random
 from datetime import date, timedelta
 from dotenv import load_dotenv
 from supabase import create_client, Client
@@ -21,6 +22,19 @@ def get_client() -> Client | None:
     return _client
 
 
+def _generate_user_code(db) -> str:
+    """Generate a unique 6-digit user code."""
+    for _ in range(10):  # retry up to 10 times on collision
+        code = str(random.randint(100000, 999999))
+        try:
+            result = db.table("users").select("phone_number").eq("user_code", code).execute()
+            if not result.data:
+                return code
+        except Exception:
+            return code
+    return str(random.randint(100000, 999999))
+
+
 async def get_or_create_user(phone_number: str) -> dict:
     db = get_client()
     if not db:
@@ -29,7 +43,8 @@ async def get_or_create_user(phone_number: str) -> dict:
         result = db.table("users").select("*").eq("phone_number", phone_number).execute()
         if result.data:
             return result.data[0]
-        new_user = {"phone_number": phone_number}
+        user_code = _generate_user_code(db)
+        new_user = {"phone_number": phone_number, "user_code": user_code}
         insert_result = db.table("users").insert(new_user).execute()
         return insert_result.data[0] if insert_result.data else new_user
     except Exception as e:
@@ -232,3 +247,36 @@ async def mark_invoice_paid(invoice_id: str) -> None:
         print(f"[DB] Invoice marked paid: {invoice_id}")
     except Exception as e:
         print(f"[DB] mark_invoice_paid error: {e}")
+
+
+# ─────────────────────────────────────────────
+# Feedback + Account deletion
+# ─────────────────────────────────────────────
+
+async def save_feedback(phone_number: str, feedback_text: str) -> None:
+    db = get_client()
+    if not db:
+        return
+    try:
+        user = await get_or_create_user(phone_number)
+        db.table("feedback").insert({
+            "phone_number": phone_number,
+            "user_code": user.get("user_code"),
+            "feedback": feedback_text,
+        }).execute()
+    except Exception as e:
+        print(f"[DB] save_feedback error: {e}")
+
+
+async def delete_user_data(phone_number: str) -> None:
+    """Permanently deletes all data for a user across all tables."""
+    db = get_client()
+    if not db:
+        return
+    try:
+        db.table("conversations").delete().eq("phone_number", phone_number).execute()
+        db.table("invoices").delete().eq("phone_number", phone_number).execute()
+        db.table("vendors").delete().eq("phone_number", phone_number).execute()
+        db.table("users").delete().eq("phone_number", phone_number).execute()
+    except Exception as e:
+        print(f"[DB] delete_user_data error: {e}")

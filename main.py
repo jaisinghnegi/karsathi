@@ -12,7 +12,7 @@ from database import (
     update_user_profile, get_client,
     get_vendor, create_vendor, update_vendor,
     create_invoice, get_open_invoices, mark_invoice_paid, get_all_invoices,
-    get_vendors
+    get_vendors, save_feedback, delete_user_data
 )
 
 load_dotenv()
@@ -86,6 +86,7 @@ Categories:
 - sms_payment: bank SMS, UPI confirmation, payment sent/received message
 - invoice_question: question about invoices, payments due, Form I, 43B
 - general_compliance: GST, tax, FSSAI, registration, compliance question
+- delete_account: user wants to delete account, remove data, stop service, unsubscribe
 - other: greeting, general chat, anything else
 
 Message: """
@@ -119,6 +120,11 @@ _memory_fallback: dict = {}
 
 # Pending payment confirmations — { wa_id: invoice_dict }
 _pending_confirmations: dict = {}
+
+# Delete account flow — { wa_id: "awaiting_feedback" | "awaiting_confirm" }
+_pending_deletions: dict = {}
+# Stores the feedback text while waiting for CONFIRM — { wa_id: feedback_text }
+_deletion_feedback: dict = {}
 
 
 def _get_fallback(wa_id: str) -> dict:
@@ -359,9 +365,45 @@ async def receive_message(request: Request):
             user_text = message["text"]["body"]
             print(f"Message from {from_number}: {user_text}")
 
-            # Check for pending payment confirmation first
             normalized = user_text.strip().lower()
-            if from_number in _pending_confirmations:
+
+            # ── Delete account flow (highest priority) ──────────────────
+            if from_number in _pending_deletions:
+                stage = _pending_deletions[from_number]
+
+                if stage == "awaiting_feedback":
+                    # User just gave their reason — store it, ask to confirm
+                    _deletion_feedback[from_number] = user_text.strip()
+                    _pending_deletions[from_number] = "awaiting_confirm"
+                    reply = (
+                        "Shukriya batane ke liye.\n\n"
+                        "Ek baar confirm karo — *CONFIRM* likho toh tumhara poora data "
+                        "permanently delete ho jayega. Yeh action undo nahi ho sakta."
+                    )
+
+                elif stage == "awaiting_confirm":
+                    if normalized == "confirm":
+                        feedback_text = _deletion_feedback.pop(from_number, "")
+                        _pending_deletions.pop(from_number)
+                        await save_feedback(from_number, feedback_text)
+                        await delete_user_data(from_number)
+                        # Also clear in-memory state
+                        _memory_fallback.pop(from_number, None)
+                        _pending_confirmations.pop(from_number, None)
+                        reply = (
+                            "Done. Tumhara account aur saara data delete ho gaya.\n"
+                            "KarSathi use karne ke liye shukriya. Kabhi bhi wapas aa sakte ho."
+                        )
+                    else:
+                        _pending_deletions.pop(from_number)
+                        _deletion_feedback.pop(from_number, None)
+                        reply = "Theek hai, delete cancel kar diya. Koi aur sawaal?"
+                else:
+                    _pending_deletions.pop(from_number, None)
+                    reply = await get_groq_response(from_number, user_text)
+
+            # ── Pending payment confirmation ─────────────────────────────
+            elif from_number in _pending_confirmations:
                 pending_inv = _pending_confirmations.pop(from_number)
                 if normalized in ("haan", "yes", "ha", "han", "हाँ", "हां"):
                     await mark_invoice_paid(pending_inv["id"])
@@ -378,6 +420,13 @@ async def receive_message(request: Request):
 
                 if intent == "sms_payment":
                     reply = await handle_sms_payment(from_number, user_text)
+                elif intent == "delete_account":
+                    _pending_deletions[from_number] = "awaiting_feedback"
+                    reply = (
+                        "Samajh gaye. Account delete karne se pehle ek sawal — "
+                        "kyun delete karna chahte ho? Koi bhi reason likh do, "
+                        "isse hume improve karne mein help milegi."
+                    )
                 else:
                     reply = await get_groq_response(from_number, user_text)
 
