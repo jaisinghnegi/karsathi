@@ -248,11 +248,18 @@ def _format_confirmation_prompt(parsed: dict) -> str:
         display_date = _date.fromisoformat(invoice_date).strftime("%d %b %Y")
     except Exception:
         display_date = invoice_date
+    payment_days = parsed.get("payment_days")
+    payment_line = (
+        f"📆 Payment Terms: {payment_days} days (invoice se liya gaya)\n"
+        if payment_days else
+        f"📆 Payment Terms: 45 days (default — invoice mein nahi tha)\n"
+    )
     return (
         f"Invoice mein yeh details mili hain:\n\n"
         f"🏢 Supplier: {vendor_name}\n"
         f"💰 Total Amount: ₹{float(amount):,.2f}\n"
-        f"📅 Invoice Date: {display_date}\n\n"
+        f"📅 Invoice Date: {display_date}\n"
+        f"{payment_line}\n"
         f"Kya yeh sahi hai?\n"
         f"✅ Haan — yahi save karo\n"
         f"❌ Nahi — cancel karo, main dobara bhejunga"
@@ -268,7 +275,14 @@ async def _save_confirmed_invoice(from_number: str, parsed: dict) -> str:
 
     user = await get_or_create_user(from_number)
     vendor = await get_vendor(from_number, vendor_name)
-    deadline_days = 15 if (vendor and vendor.get("agreement_type") == "verbal") else 45
+
+    # Priority: verbal agreement (15d) > stated on invoice > default 45d
+    if vendor and vendor.get("agreement_type") == "verbal":
+        deadline_days = 15
+    elif parsed.get("payment_days"):
+        deadline_days = int(parsed["payment_days"])
+    else:
+        deadline_days = 45
 
     await create_invoice(from_number, vendor_name, amount, invoice_date, deadline_days)
 

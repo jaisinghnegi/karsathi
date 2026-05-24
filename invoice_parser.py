@@ -39,9 +39,16 @@ invoice_date:
   - Look for: "Invoice Date", "Date of Issue", "Billing Date"
   - Format: YYYY-MM-DD
 
-Output exactly this format:
-{"vendor_name": "ABC Traders", "amount": 47200, "invoice_date": "2026-04-18"}
+payment_days:
+  - Number of days allowed for payment, if explicitly stated on the invoice
+  - Look for: "Net 30", "Payment due in 45 days", "Due within 15 days", "Credit period: 60 days"
+  - Return as a plain integer (e.g. 30, 45, 60)
+  - If not mentioned anywhere on the invoice: use null
 
+Output exactly this format:
+{"vendor_name": "ABC Traders", "amount": 47200, "invoice_date": "2026-04-18", "payment_days": 30}
+
+If payment_days not stated: {"vendor_name": "ABC Traders", "amount": 47200, "invoice_date": "2026-04-18", "payment_days": null}
 If not an invoice: {"error": "not_an_invoice"}
 If a field is unreadable: use null for that field only."""
 
