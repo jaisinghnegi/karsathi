@@ -105,43 +105,119 @@ def format_risk_message(
     risk: dict,
 ) -> str:
     """
-    Returns a WhatsApp-ready Hinglish message summarising the invoice risk.
-    Kept under 6 lines so it's scannable on mobile.
-
-    Parameters
-    ----------
-    vendor_name  : str
-    amount       : float  (raw rupee amount)
-    invoice_date : str    (display string, e.g. '15 Mar 2026')
-    risk         : dict   (output of calculate_risk)
+    Returns a detailed, educational WhatsApp-ready Hinglish message
+    explaining the invoice risk, the laws involved, and what action to take.
     """
+    from datetime import date as _date
+    try:
+        display_date = _date.fromisoformat(invoice_date).strftime("%d %b %Y")
+    except Exception:
+        display_date = invoice_date
+
     lines = []
 
-    # Line 1: confirmation header
-    lines.append(f"{vendor_name} ₹{amount:,.0f} — {invoice_date} ka invoice save ho gaya ✅")
+    # ── Header ──────────────────────────────────────────────────────────
+    lines.append(f"✅ *Invoice Save Ho Gayi*")
+    lines.append(f"🏢 Supplier: {vendor_name}")
+    lines.append(f"💰 Amount: ₹{amount:,.0f}")
+    lines.append(f"📅 Invoice Date: {display_date}")
+    lines.append("")
 
-    # Line 2: overdue / at-risk / safe status
+    # ── MSMED Act status ─────────────────────────────────────────────────
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
     if risk["is_overdue"]:
+        lines.append(f"⚠️ *MSMED Act Status — {risk['days_overdue']} Din Overdue!*")
+        lines.append("")
         lines.append(
-            f"⚠️ {risk['days_overdue']} din overdue! "
-            f"Penalty interest abhi tak: ₹{risk['penalty_interest']:,.2f}"
+            "MSMED Act (2006) kehta hai ki agar aapka supplier MSME registered hai, "
+            "toh aapko invoice date se 45 din ke andar payment karni hogi. "
+            f"Yeh invoice {risk['days_overdue']} din se overdue hai — "
+            "yani aap technically law ke against hain agar yeh supplier MSME registered hai."
         )
     elif risk["is_at_risk"]:
-        lines.append(f"🔔 Sirf {risk['days_remaining']} din baaki hain! Jaldi payment karo.")
+        lines.append(f"🔔 *MSMED Act Status — Sirf {risk['days_remaining']} Din Baaki!*")
+        lines.append("")
+        lines.append(
+            "MSMED Act ke under, MSME suppliers ko 45 din ke andar payment karni hoti hai. "
+            f"Aapke paas sirf {risk['days_remaining']} din baaki hain. "
+            "Abhi payment karo — deadline miss hone par penalty aur tax loss dono honge."
+        )
     else:
-        lines.append(f"📅 {risk['days_remaining']} din baaki hain payment ke liye.")
+        lines.append(f"📅 *MSMED Act Status — {risk['days_remaining']} Din Baaki*")
+        lines.append("")
+        lines.append(
+            "MSMED Act ke under, MSME suppliers ko 45 din ke andar payment karni hoti hai. "
+            f"Abhi {risk['days_remaining']} din baaki hain — aap safe zone mein ho. "
+            "Lekin payment plan karke chalo taki deadline miss na ho."
+        )
 
-    # Line 3: 43B(h) tax deductibility risk
+    lines.append("")
+
+    # ── Penalty interest ─────────────────────────────────────────────────
+    if risk["is_overdue"]:
+        lines.append("━━━━━━━━━━━━━━━━━━━━")
+        lines.append("💸 *Penalty Interest (Section 16, MSMED Act)*")
+        lines.append("")
+        lines.append(
+            "MSMED Act Section 16 ke under, overdue payment par 3 guna RBI bank rate "
+            "ka compound interest lagta hai — jo abhi *25.5% per annum* hai. "
+            f"Yeh interest invoice ki due date se shuru hota hai aur roz badhta rehta hai."
+        )
+        lines.append("")
+        lines.append(
+            f"Abhi tak ban chuki penalty: *₹{risk['penalty_interest']:,.2f}*"
+        )
+        lines.append(
+            "Agar aaj bhi payment nahi ki toh yeh amount aur badhegi — "
+            "aur supplier court mein claim kar sakta hai."
+        )
+        lines.append("")
+
+    # ── 43B(h) tax risk ──────────────────────────────────────────────────
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    lines.append("📌 *Section 43B(h) — Aapka Tax Khatre Mein Hai*")
+    lines.append("")
+    lines.append(
+        "Income Tax Act ka Section 43B(h) kehta hai ki agar aapne MSME supplier ko "
+        "45 din ke andar payment nahi ki, toh yeh poora invoice amount aapki "
+        "*taxable income se deductible nahi hoga* us financial year mein."
+    )
+    lines.append("")
     tax_min = risk["tax_loss_min"]
     tax_max = risk["tax_loss_max"]
     if tax_min == tax_max:
         lines.append(
-            f"📌 43B(h): Agar payment miss hui toh ₹{tax_min:,.0f} ka tax deduction jaayega."
+            f"Matlab: ₹{amount:,.0f} ka kharcha expense nahi maana jaayega, "
+            f"aur aapko *₹{tax_min:,.0f} zyada tax* bharna padega."
         )
     else:
         lines.append(
-            f"📌 43B(h): Payment miss hui toh ₹{tax_min:,.0f}–₹{tax_max:,.0f} ka "
-            f"tax deduction jaayega (slab ke hisaab se)."
+            f"Matlab: ₹{amount:,.0f} ka kharcha expense nahi maana jaayega, "
+            f"aur aapko *₹{tax_min:,.0f} se ₹{tax_max:,.0f} zyada tax* bharna padega "
+            "(exact amount aapke tax slab par depend karta hai)."
+        )
+
+    lines.append("")
+
+    # ── Recommended action ───────────────────────────────────────────────
+    lines.append("━━━━━━━━━━━━━━━━━━━━")
+    lines.append("🎯 *Abhi Kya Karein?*")
+    lines.append("")
+    if risk["is_overdue"]:
+        lines.append(
+            "Jitna jaldi ho sake payment karo. Agar cash flow tight hai, "
+            "supplier se partial payment ya written settlement karo aur record rakho. "
+            "Agar aaj payment ki toh penalty aur tax risk dono stop ho jaayenge."
+        )
+    elif risk["is_at_risk"]:
+        lines.append(
+            f"Sirf {risk['days_remaining']} din hain — is hafte mein payment plan karo. "
+            "Deadline miss hone se pehle action lo."
+        )
+    else:
+        lines.append(
+            "Abhi safe ho, lekin payment schedule mein rakho taki bhool na jao. "
+            "KarSathi aapko deadline se 10 din pehle remind karega."
         )
 
     return "\n".join(lines)

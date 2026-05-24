@@ -127,6 +127,10 @@ _pending_deletions: dict = {}
 # Stores the feedback text while waiting for CONFIRM — { wa_id: feedback_text }
 _deletion_feedback: dict = {}
 
+# Invoice parse confirmation — { wa_id: parsed_invoice_dict }
+# Holds parsed data until user confirms it is correct before saving
+_pending_invoice_confirmations: dict = {}
+
 
 def _get_fallback(wa_id: str) -> dict:
     if wa_id not in _memory_fallback:
@@ -234,12 +238,82 @@ async def send_whatsapp_message(to: str, message: str):
     print(f"[WhatsApp -> {to}]: {message}")
 
 
+def _format_confirmation_prompt(parsed: dict) -> str:
+    """Formats parsed invoice details for user confirmation before saving."""
+    from datetime import date as _date
+    vendor_name = parsed.get("vendor_name", "Unknown")
+    amount = parsed.get("amount", 0)
+    invoice_date = parsed.get("invoice_date", "")
+    try:
+        display_date = _date.fromisoformat(invoice_date).strftime("%d %b %Y")
+    except Exception:
+        display_date = invoice_date
+    return (
+        f"Invoice mein yeh details mili hain:\n\n"
+        f"🏢 Supplier: {vendor_name}\n"
+        f"💰 Total Amount: ₹{float(amount):,.0f}\n"
+        f"📅 Invoice Date: {display_date}\n\n"
+        f"Kya yeh sahi hai?\n"
+        f"✅ Haan — yahi save karo\n"
+        f"❌ Nahi — cancel karo, main dobara bhejunga"
+    )
+
+
+async def _save_confirmed_invoice(from_number: str, parsed: dict) -> str:
+    """Saves a confirmed invoice and returns the full risk + MSME message."""
+    from datetime import date as _date, timedelta
+    vendor_name = parsed["vendor_name"]
+    amount = float(parsed["amount"])
+    invoice_date = parsed["invoice_date"]
+
+    user = await get_or_create_user(from_number)
+    vendor = await get_vendor(from_number, vendor_name)
+    deadline_days = 15 if (vendor and vendor.get("agreement_type") == "verbal") else 45
+
+    await create_invoice(from_number, vendor_name, amount, invoice_date, deadline_days)
+
+    inv_date = _date.fromisoformat(invoice_date)
+    due_date = inv_date + timedelta(days=deadline_days)
+    risk = calculate_risk(
+        {"due_date": due_date.isoformat(), "amount": amount},
+        user.get("tax_slab", "unknown"),
+    )
+    risk_msg = format_risk_message(vendor_name, amount, invoice_date, risk)
+
+    if not vendor:
+        await create_vendor(from_number, vendor_name)
+        msme_question = (
+            f"\n\n━━━━━━━━━━━━━━━━━━━━\n"
+            f"🏢 Ek Zaroori Sawaal\n\n"
+            f"Kya *{vendor_name}* ek MSME (Micro, Small or Medium Enterprise) "
+            f"registered supplier hai?\n\n"
+            f"Yeh isliye pooch raha hoon kyunki:\n"
+            f"• Agar yeh MSME registered hai toh MSMED Act ke under aapki *legal "
+            f"obligation* hai ki invoice date se 45 din ke andar payment karni hogi\n"
+            f"• 45 din ke baad 25.5% annual penalty interest shuru ho jaata hai "
+            f"(Section 16, MSMED Act)\n"
+            f"• Aur agar payment miss hui toh yeh poora invoice amount aapki "
+            f"taxable income se deductible nahi rahega — matlab zyada tax bharoge "
+            f"(Section 43B(h), Income Tax Act)\n\n"
+            f"Isliye confirm karna zaroori hai. Reply karo:\n"
+            f"✅ Haan — MSME registered hai\n"
+            f"❌ Nahi — MSME nahi hai\n"
+            f"🤷 Pata nahi — main check karunga"
+        )
+        return risk_msg + msme_question
+    else:
+        return risk_msg
+
+
 async def handle_invoice_image(from_number: str, image_url: str) -> str:
     whatsapp_token = os.getenv("WHATSAPP_TOKEN")
     parsed = await parse_invoice_from_url(image_url, whatsapp_token)
 
     if "error" in parsed:
-        return "Yeh invoice nahi lag raha, ya photo thodi blur hai. Ek clear photo bhejo ya details type kar do: vendor name, amount, aur date."
+        return (
+            "Yeh invoice nahi lag raha, ya photo thodi blur hai.\n"
+            "Ek clear photo bhejo ya details type kar do: vendor name, amount, aur date."
+        )
 
     vendor_name = parsed.get("vendor_name")
     amount = parsed.get("amount")
@@ -249,32 +323,8 @@ async def handle_invoice_image(from_number: str, image_url: str) -> str:
         missing = [f for f, v in [("vendor name", vendor_name), ("amount", amount), ("date", invoice_date)] if not v]
         return f"Invoice mein {', '.join(missing)} clearly nahi dikh raha. Please type kar do."
 
-    user = await get_or_create_user(from_number)
-    vendor = await get_vendor(from_number, vendor_name)
-
-    # Determine deadline: default 45 days unless verbal agreement stored
-    deadline_days = 15 if (vendor and vendor.get("agreement_type") == "verbal") else 45
-
-    # Save invoice
-    await create_invoice(from_number, vendor_name, float(amount), invoice_date, deadline_days)
-
-    # Calculate risk
-    from datetime import date, timedelta
-    inv_date = date.fromisoformat(invoice_date)
-    due_date = inv_date + timedelta(days=deadline_days)
-    risk = calculate_risk({"due_date": due_date.isoformat(), "amount": amount}, user.get("tax_slab", "unknown"))
-    risk_msg = format_risk_message(vendor_name, float(amount), invoice_date, risk)
-
-    if not vendor:
-        # New vendor — create and ask MSME status
-        await create_vendor(from_number, vendor_name)
-        return (
-            f"{risk_msg}\n\n"
-            f"Ek sawal: {vendor_name} — kya yeh MSME registered supplier hai?\n"
-            f"Haan / Nahi / Pata nahi — reply karo"
-        )
-    else:
-        return risk_msg
+    _pending_invoice_confirmations[from_number] = parsed
+    return _format_confirmation_prompt(parsed)
 
 
 async def handle_sms_payment(from_number: str, text: str) -> str:
@@ -393,26 +443,8 @@ async def receive_message(request: Request):
                     missing = [f for f, v in [("vendor name", vendor_name), ("amount", amount), ("date", invoice_date)] if not v]
                     reply = f"PDF mein {', '.join(missing)} clearly nahi mila. Please type kar do."
                 else:
-                    user = await get_or_create_user(from_number)
-                    vendor = await get_vendor(from_number, vendor_name)
-                    deadline_days = 15 if (vendor and vendor.get("agreement_type") == "verbal") else 45
-                    await create_invoice(from_number, vendor_name, float(amount), invoice_date, deadline_days)
-
-                    from datetime import date as _date, timedelta
-                    inv_date = _date.fromisoformat(invoice_date)
-                    due_date = inv_date + timedelta(days=deadline_days)
-                    risk = calculate_risk({"due_date": due_date.isoformat(), "amount": amount}, user.get("tax_slab", "unknown"))
-                    risk_msg = format_risk_message(vendor_name, float(amount), invoice_date, risk)
-
-                    if not vendor:
-                        await create_vendor(from_number, vendor_name)
-                        reply = (
-                            f"{risk_msg}\n\n"
-                            f"Ek sawal: {vendor_name} — kya yeh MSME registered supplier hai?\n"
-                            f"Haan / Nahi / Pata nahi — reply karo"
-                        )
-                    else:
-                        reply = risk_msg
+                    _pending_invoice_confirmations[from_number] = parsed
+                    reply = _format_confirmation_prompt(parsed)
 
             await send_whatsapp_message(from_number, reply)
             await save_message(from_number, "assistant", reply)
@@ -438,8 +470,16 @@ async def receive_message(request: Request):
                 await save_message(from_number, "assistant", reply)
                 return {"status": "ok", "reply": reply}
 
-            # ── Delete account flow (highest priority) ──────────────────
-            if from_number in _pending_deletions:
+            # ── Invoice parse confirmation ───────────────────────────────
+            if from_number in _pending_invoice_confirmations:
+                parsed = _pending_invoice_confirmations.pop(from_number)
+                if normalized in ("haan", "yes", "ha", "han", "हाँ", "हां"):
+                    reply = await _save_confirmed_invoice(from_number, parsed)
+                else:
+                    reply = "Theek hai, invoice save nahi ki. Sahi details ke saath dobara bhejo."
+
+            # ── Delete account flow ──────────────────────────────────────
+            elif from_number in _pending_deletions:
                 stage = _pending_deletions[from_number]
 
                 if stage == "awaiting_feedback":

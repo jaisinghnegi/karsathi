@@ -20,10 +20,24 @@ VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 INVOICE_EXTRACTION_PROMPT = """Extract invoice data. Output ONLY a JSON object, no explanation, no markdown.
 
-Rules:
-- vendor_name: the company/person who ISSUED this invoice (top of page, "From", "Sold by", company letterhead)
-- amount: the final TOTAL amount as a plain number (no symbols, no commas)
-- invoice_date: the invoice DATE (not due date) in YYYY-MM-DD format
+STRICT RULES — read carefully:
+
+vendor_name:
+  - The company or person who ISSUED/SENT this invoice (the SELLER, the SUPPLIER)
+  - Look for: company letterhead at the top, "Bill From", "Seller", "Supplier", "From"
+  - NEVER pick the buyer, customer, ship-to address, or "Bill To" party
+  - If the invoice is from "Ramesh Traders" to "My Company", vendor_name = "Ramesh Traders"
+
+amount:
+  - The GRAND TOTAL or TOTAL AMOUNT DUE — the final amount to be paid
+  - Look for: "Grand Total", "Total Amount", "Amount Due", "Net Payable", "Invoice Total"
+  - NEVER pick subtotals, line item amounts, tax amounts, or partial amounts
+  - Return as a plain number only — no commas, no currency symbols (e.g. 47200 not ₹47,200)
+
+invoice_date:
+  - The date the invoice was ISSUED — NOT the due date, NOT delivery date, NOT PO date
+  - Look for: "Invoice Date", "Date of Issue", "Billing Date"
+  - Format: YYYY-MM-DD
 
 Output exactly this format:
 {"vendor_name": "ABC Traders", "amount": 47200, "invoice_date": "2026-04-18"}
