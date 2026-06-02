@@ -71,30 +71,42 @@ async def get_conversation_history(phone_number: str, limit: int = 20) -> list[d
     if not db:
         return []
     try:
+        # Fetch NEWEST `limit` messages (desc), then reverse to chronological order
         result = (
             db.table("conversations")
             .select("role, message")
             .eq("phone_number", phone_number)
-            .order("created_at", desc=False)
+            .order("created_at", desc=True)
             .limit(limit)
             .execute()
         )
-        return [{"role": row["role"], "content": row["message"]} for row in result.data]
+        rows = list(reversed(result.data))
+        # Strip any error/fallback messages that leaked into DB before this fix
+        _error_prefix = "Abhi thoda technical issue"
+        return [
+            {"role": row["role"], "content": row["message"]}
+            for row in rows
+            if row["message"] != _error_prefix and not row["message"].startswith(_error_prefix)
+        ]
     except Exception as e:
         print(f"[DB] get_conversation_history error: {e}")
         return []
 
 
 async def update_user_profile(phone_number: str, field: str, value: str) -> None:
-    allowed_fields = {"language", "business_type", "state", "city", "turnover_bracket"}
+    allowed_fields = {"language", "business_type", "state", "city", "turnover_bracket", "gst_status", "qrmp_opted", "tds_on_salary"}
     if field not in allowed_fields:
         return
     db = get_client()
     if not db:
         return
     try:
-        db.table("users").update({field: value}).eq("phone_number", phone_number).execute()
-        print(f"[DB] Profile updated: {phone_number} -> {field}={value}")
+        # Boolean columns — cast string to bool before storing
+        stored_value: str | bool = value
+        if field in ("qrmp_opted", "tds_on_salary"):
+            stored_value = value.lower() in ("true", "yes", "haan", "opted", "quarterly", "zyada")
+        db.table("users").update({field: stored_value}).eq("phone_number", phone_number).execute()
+        print(f"[DB] Profile updated: {phone_number} -> {field}={stored_value}")
     except Exception as e:
         print(f"[DB] update_user_profile error: {e}")
 
@@ -280,3 +292,251 @@ async def delete_user_data(phone_number: str) -> None:
         db.table("users").delete().eq("phone_number", phone_number).execute()
     except Exception as e:
         print(f"[DB] delete_user_data error: {e}")
+
+
+# ─────────────────────────────────────────────
+# Reminder functions (Day 5)
+# ─────────────────────────────────────────────
+
+async def get_all_gst_users() -> list[dict]:
+    """Returns all users with gst_status = 'registered' for proactive reminders."""
+    db = get_client()
+    if not db:
+        return []
+    try:
+        result = (
+            db.table("users")
+            .select("*")
+            .eq("gst_status", "registered")
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        print(f"[DB] get_all_gst_users error: {e}")
+        return []
+
+
+async def get_all_overdue_invoices() -> list[dict]:
+    """Returns all unpaid invoices past their due date across all users."""
+    db = get_client()
+    if not db:
+        return []
+    try:
+        today = date.today().isoformat()
+        result = (
+            db.table("invoices")
+            .select("*")
+            .neq("status", "paid")
+            .lt("due_date", today)
+            .order("due_date", desc=False)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        print(f"[DB] get_all_overdue_invoices error: {e}")
+        return []
+
+
+# ─────────────────────────────────────────────
+# Day 8: Vendor MSME tools
+# ─────────────────────────────────────────────
+
+async def set_vendor_msme_status(phone_number: str, vendor_name: str, is_msme: bool) -> bool:
+    """Marks a vendor as MSME registered or not. Returns True if vendor was found."""
+    db = get_client()
+    if not db:
+        return False
+    try:
+        result = (
+            db.table("vendors")
+            .update({"is_msme": is_msme})
+            .eq("phone_number", phone_number)
+            .ilike("vendor_name", f"%{vendor_name}%")
+            .execute()
+        )
+        return bool(result.data)
+    except Exception as e:
+        print(f"[DB] set_vendor_msme_status error: {e}")
+        return False
+
+
+async def get_msme_vendors(phone_number: str) -> list[dict]:
+    """Returns all vendors marked as MSME registered."""
+    db = get_client()
+    if not db:
+        return []
+    try:
+        result = (
+            db.table("vendors")
+            .select("*")
+            .eq("phone_number", phone_number)
+            .eq("is_msme", True)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        print(f"[DB] get_msme_vendors error: {e}")
+        return []
+
+
+async def get_vendor_invoices(phone_number: str, vendor_name: str) -> list[dict]:
+    """Returns all open invoices for a specific vendor (partial name match)."""
+    db = get_client()
+    if not db:
+        return []
+    try:
+        result = (
+            db.table("invoices")
+            .select("*")
+            .eq("phone_number", phone_number)
+            .eq("status", "open")
+            .ilike("vendor_name", f"%{vendor_name}%")
+            .order("due_date", desc=False)
+            .execute()
+        )
+        return result.data or []
+    except Exception as e:
+        print(f"[DB] get_vendor_invoices error: {e}")
+        return []
+
+
+async def get_overdue_msme_invoices(phone_number: str) -> list[dict]:
+    """
+    Returns open invoices for MSME vendors that are past their due date.
+    Joins vendors (is_msme=True) with invoices (status=open, due_date < today).
+    """
+    db = get_client()
+    if not db:
+        return []
+    try:
+        msme_vendors = await get_msme_vendors(phone_number)
+        if not msme_vendors:
+            return []
+        msme_names = [v["vendor_name"] for v in msme_vendors]
+        today = date.today().isoformat()
+        overdue = []
+        for name in msme_names:
+            result = (
+                db.table("invoices")
+                .select("*")
+                .eq("phone_number", phone_number)
+                .eq("status", "open")
+                .ilike("vendor_name", f"%{name}%")
+                .lt("due_date", today)
+                .execute()
+            )
+            overdue.extend(result.data or [])
+        return sorted(overdue, key=lambda x: x["due_date"])
+    except Exception as e:
+        print(f"[DB] get_overdue_msme_invoices error: {e}")
+        return []
+
+
+# ─────────────────────────────────────────────
+# User facts memory (Migration 010)
+# ─────────────────────────────────────────────
+
+async def get_user_facts(wa_id: str) -> dict:
+    """Returns all saved facts for a user as {fact_key: fact_value}."""
+    db = get_client()
+    if not db:
+        return {}
+    try:
+        result = db.table("user_facts").select("fact_key, fact_value").eq("wa_id", wa_id).execute()
+        return {row["fact_key"]: row["fact_value"] for row in (result.data or [])}
+    except Exception as e:
+        print(f"[DB] get_user_facts error: {e}")
+        return {}
+
+
+async def save_user_fact(wa_id: str, fact_key: str, fact_value: str) -> None:
+    """Upserts a single fact. Updates updated_at if the fact already exists."""
+    db = get_client()
+    if not db:
+        return
+    try:
+        db.table("user_facts").upsert(
+            {"wa_id": wa_id, "fact_key": fact_key, "fact_value": fact_value, "updated_at": "now()"},
+            on_conflict="wa_id,fact_key",
+        ).execute()
+    except Exception as e:
+        print(f"[DB] save_user_fact error: {e}")
+
+
+async def delete_user_fact(wa_id: str, fact_key: str) -> None:
+    """Deletes a specific fact for a user."""
+    db = get_client()
+    if not db:
+        return
+    try:
+        db.table("user_facts").delete().eq("wa_id", wa_id).eq("fact_key", fact_key).execute()
+    except Exception as e:
+        print(f"[DB] delete_user_fact error: {e}")
+
+
+# ─────────────────────────────────────────────
+# Conversation summaries (Migration 011)
+# ─────────────────────────────────────────────
+
+async def get_conversation_summary(wa_id: str) -> str:
+    """Returns the latest conversation summary for a user, or empty string if none."""
+    db = get_client()
+    if not db:
+        return ""
+    try:
+        result = db.table("conversation_summaries").select("summary").eq("wa_id", wa_id).execute()
+        return result.data[0]["summary"] if result.data else ""
+    except Exception as e:
+        print(f"[DB] get_conversation_summary error: {e}")
+        return ""
+
+
+async def save_conversation_summary(wa_id: str, summary: str, message_count: int = 0) -> None:
+    """Upserts the conversation summary for a user."""
+    db = get_client()
+    if not db:
+        return
+    try:
+        db.table("conversation_summaries").upsert(
+            {
+                "wa_id": wa_id,
+                "summary": summary,
+                "message_count_at_summary": message_count,
+                "updated_at": "now()",
+            },
+            on_conflict="wa_id",
+        ).execute()
+    except Exception as e:
+        print(f"[DB] save_conversation_summary error: {e}")
+
+
+async def get_conversation_count(wa_id: str) -> int:
+    """Returns total number of messages stored for a user."""
+    db = get_client()
+    if not db:
+        return 0
+    try:
+        result = (
+            db.table("conversations")
+            .select("id", count="exact")
+            .eq("phone_number", wa_id)
+            .execute()
+        )
+        return result.count or 0
+    except Exception as e:
+        print(f"[DB] get_conversation_count error: {e}")
+        return 0
+
+
+async def mark_reminder_sent(phone_number: str, reminder_key: str) -> None:
+    """Records that a reminder was sent so it won't be sent again."""
+    db = get_client()
+    if not db:
+        return
+    try:
+        row = db.table("users").select("reminders_sent").eq("phone_number", phone_number).execute()
+        current: dict = (row.data[0].get("reminders_sent") or {}) if row.data else {}
+        current[reminder_key] = date.today().isoformat()
+        db.table("users").update({"reminders_sent": current}).eq("phone_number", phone_number).execute()
+    except Exception as e:
+        print(f"[DB] mark_reminder_sent error: {e}")
