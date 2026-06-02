@@ -1,6 +1,8 @@
 import os
 import re
 import json
+import hmac
+import hashlib
 import asyncio
 import httpx
 from contextlib import asynccontextmanager
@@ -9,6 +11,9 @@ from zoneinfo import ZoneInfo
 from fastapi import FastAPI, Request, Query, HTTPException
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from reminders import start_scheduler
 from invoice_parser import parse_invoice_from_url
 from pdf_parser import parse_invoice_from_pdf_url
@@ -38,7 +43,10 @@ load_dotenv()
 
 VERIFY_TOKEN = os.getenv("VERIFY_TOKEN")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+WHATSAPP_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+limiter = Limiter(key_func=get_remote_address)
 
 GROQ_DOWN_MESSAGE = (
     "Abhi thoda technical issue aa gaya hai — 1-2 minute mein dobara try karo. "
@@ -248,6 +256,8 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="KarSathi WhatsApp Webhook", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Fallback in-memory store — used only when Supabase is unreachable
 _memory_fallback: dict = {}
@@ -683,6 +693,75 @@ async def get_groq_response(wa_id: str, user_message: str, extra_context: str = 
         await save_message(wa_id, "assistant", reply)
 
     return reply
+
+
+# ── Security helpers ───────────────────────────────────────────────────────
+
+_MAX_INPUT_LENGTH = 2000
+
+_INJECTION_RE = re.compile(
+    r"(ignore\s+(previous|all|above|prior)\s+instructions?"
+    r"|disregard\s+(your|all|previous)\s+(instructions?|rules?|guidelines?)"
+    r"|you\s+are\s+now\s+"
+    r"|pretend\s+(you\s+are|to\s+be)\s+"
+    r"|act\s+as\s+(?!karsathi)"
+    r"|forget\s+(everything|your\s+training|your\s+instructions?)"
+    r"|system\s+prompt"
+    r"|<\|.*?\|>"
+    r"|###\s*instruction"
+    r"|\[INST\]|\[\/INST\]"
+    r"|<system>|<\/system>"
+    r"|override\s+instructions?"
+    r"|new\s+instructions?\s*:)"
+    ,
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def sanitise_input(text: str) -> str:
+    """
+    Cleans user input before it reaches Groq.
+    1. Truncates to 2000 characters.
+    2. Strips null bytes and non-printable control characters (keeps newline/tab).
+    3. Detects prompt injection — returns a safe sentinel string if found.
+    Never raises; always returns a string safe to pass downstream.
+    """
+    text = text[:_MAX_INPUT_LENGTH]
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+    if _INJECTION_RE.search(text):
+        print(f"[Security] Prompt injection attempt blocked: {text[:120]!r}")
+        return "[blocked]"
+    return text.strip()
+
+
+async def _verify_whatsapp_signature(request: Request) -> bytes:
+    """
+    Validates the X-Hub-Signature-256 header sent by WhatsApp Cloud API.
+    Returns the raw request body on success.
+    Raises HTTP 403 if the signature is missing or invalid.
+    If WHATSAPP_APP_SECRET is not set (dev mode), skips verification with a warning.
+    """
+    body = await request.body()
+
+    if not WHATSAPP_APP_SECRET:
+        print("[Security] WARNING: WHATSAPP_APP_SECRET not set — skipping signature verification")
+        return body
+
+    sig_header = request.headers.get("X-Hub-Signature-256", "")
+    if not sig_header.startswith("sha256="):
+        raise HTTPException(status_code=403, detail="Missing webhook signature")
+
+    received = sig_header[7:]  # strip "sha256="
+    expected = hmac.new(
+        WHATSAPP_APP_SECRET.encode("utf-8"),
+        body,
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(received, expected):
+        raise HTTPException(status_code=403, detail="Invalid webhook signature")
+
+    return body
 
 
 async def send_whatsapp_message(to: str, message: str):
@@ -1168,8 +1247,13 @@ async def _profile_and_proactive(from_number: str, user_text: str) -> None:
 
 
 @app.post("/webhook")
+@limiter.limit("100/minute")
 async def receive_message(request: Request):
-    data = await request.json()
+    body_bytes = await _verify_whatsapp_signature(request)
+    try:
+        data = json.loads(body_bytes)
+    except (json.JSONDecodeError, ValueError):
+        return {"status": "ok"}
 
     try:
         entry = data["entry"][0]
@@ -1262,7 +1346,7 @@ async def receive_message(request: Request):
 
         # ── Text message ──────────────────────────────────────────────────
         elif msg_type == "text":
-            user_text = message["text"]["body"]
+            user_text = sanitise_input(message["text"]["body"])
             normalized = user_text.strip().lower()
 
             # ── First-time onboarding ────────────────────────────────────
@@ -1421,7 +1505,7 @@ async def test_chat(req: TestChatRequest):
     Only for local/dev use; never expose in production.
     """
     from_number = req.wa_id
-    user_text = req.text
+    user_text = sanitise_input(req.text)
     normalized = user_text.strip().lower()
 
     try:
